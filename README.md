@@ -59,13 +59,20 @@ pip install rich
 python quandle.py
 ```
 
-#### Developer Mode
-To reveal the superposed target words during play:
-```bash
-python quandle.py --dev
-```
+---
+
+## 🛠️ Developer Mode (Open to Everyone!)
+
+Quandle includes a **Developer Mode** accessible to all players who want to peek behind the quantum curtain and observe the secret superposed words (**Word A** and **Word B**) live as they play!
+
+- **🌐 Web Version:** Click the **⚛ atom icon** in the top-right corner of the header to toggle Dev Mode on or off at any time.
+- **🐍 Terminal Version:** Launch the game with the `--dev` flag:
+  ```bash
+  python quandle.py --dev
+  ```
 
 ---
+
 
 ## 📁 Repository Structure
 
