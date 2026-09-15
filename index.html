@@ -1,0 +1,1216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Quandle — Quantum Word Deduction</title>
+    <meta name="description" content="Quandle: a quantum-inspired word puzzle where two words exist in superposition. Observe carefully to collapse reality.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        /* ======================================================
+           ROOT DESIGN TOKENS
+           ====================================================== */
+        :root {
+            --bg:            #121213;
+            --bg-raised:     #1a1a1b;
+            --border:        #3a3a3c;
+            --border-active: #565758;
+            --text:          #ffffff;
+            --text-dim:      #818384;
+
+            --green:  #538d4e;
+            --yellow: #b59f3b;
+            --purple: #a855f7;
+            --gray:   #3a3a3c;
+
+            --key-bg:       #818384;
+            --key-text:     #ffffff;
+            --tile-size:    62px;
+            --tile-gap:     5px;
+            --board-width:  calc(var(--tile-size) * 5 + var(--tile-gap) * 4);
+
+            --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            --anim-flip:    500ms;
+            --anim-stagger: 280ms;
+        }
+
+        /* ======================================================
+           RESET & BASE
+           ====================================================== */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body {
+            height: 100%; overflow: hidden;
+            background: var(--bg); color: var(--text);
+            font-family: var(--font);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ======================================================
+           APP LAYOUT
+           ====================================================== */
+        #game {
+            display: flex; flex-direction: column;
+            height: 100%; max-width: 500px;
+            margin: 0 auto; position: relative;
+        }
+
+        /* ======================================================
+           HEADER
+           ====================================================== */
+        header {
+            display: flex; align-items: center; justify-content: center;
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border);
+            position: relative; flex-shrink: 0;
+        }
+        header h1 {
+            font-size: 28px; font-weight: 900; letter-spacing: 4px;
+            background: linear-gradient(135deg, #22d3ee, #a855f7, #22d3ee);
+            background-size: 200% 200%;
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: shimmer 4s ease-in-out infinite;
+        }
+        @keyframes shimmer {
+            0%, 100% { background-position: 0% 50%; }
+            50%      { background-position: 100% 50%; }
+        }
+        .hdr-btn {
+            position: absolute; top: 50%; transform: translateY(-50%);
+            width: 36px; height: 36px;
+            display: flex; align-items: center; justify-content: center;
+            background: transparent; border: 1px solid var(--border);
+            border-radius: 8px; color: var(--text-dim); font-size: 16px;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .hdr-btn:hover { border-color: var(--text-dim); color: var(--text); }
+        #help-btn { left: 16px; font-weight: 700; }
+        #dev-btn  { right: 16px; font-size: 14px; opacity: 0.35; }
+        #dev-btn:hover { opacity: 1; }
+
+        /* ======================================================
+           PHASE INDICATOR
+           ====================================================== */
+        #phase-bar {
+            display: flex; align-items: center; justify-content: center;
+            gap: 12px; padding: 8px 16px;
+            font-size: 12px; font-weight: 700; letter-spacing: 1.5px;
+            text-transform: uppercase; flex-shrink: 0;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        #phase-label { display: flex; align-items: center; gap: 6px; }
+        #phase-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #22d3ee; animation: pulseDot 2s ease-in-out infinite;
+        }
+        @keyframes pulseDot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50%      { opacity: 0.4; transform: scale(0.7); }
+        }
+        #guess-count { color: var(--text-dim); font-weight: 500; }
+        .phase-superposition #phase-dot { background: #22d3ee; }
+        .phase-collapsed #phase-dot     { background: #ef4444; }
+        .phase-alternate #phase-dot     { background: var(--purple); }
+
+        /* ======================================================
+           DEV PANEL
+           ====================================================== */
+        #dev-panel {
+            display: none; padding: 6px 16px;
+            font-size: 11px; letter-spacing: 1px;
+            text-align: center; color: var(--text-dim);
+            background: rgba(250,204,21,0.06);
+            border-bottom: 1px solid rgba(250,204,21,0.15);
+        }
+        #dev-panel.visible { display: block; }
+        #dev-panel strong { font-weight: 700; }
+        #dev-panel .dev-a { color: var(--green); }
+        #dev-panel .dev-b { color: var(--purple); }
+
+        /* ======================================================
+           BOARD
+           ====================================================== */
+        #board-wrapper {
+            flex: 1; overflow-y: auto; display: flex;
+            justify-content: center; padding: 12px 0;
+        }
+        #board {
+            display: flex; flex-direction: column;
+            align-items: center; gap: var(--tile-gap);
+            width: var(--board-width); padding: 4px 0 80px 0;
+        }
+        .row {
+            display: grid; grid-template-columns: repeat(5, 1fr);
+            gap: var(--tile-gap); width: 100%;
+        }
+
+        /* --- Phase separators (via CSS classes set by JS) --- */
+        .row.phase-start-collapsed,
+        .row.phase-start-alternate {
+            margin-top: 22px; position: relative;
+        }
+        .row.phase-start-collapsed::before,
+        .row.phase-start-alternate::before {
+            position: absolute; top: -16px; left: 50%;
+            transform: translateX(-50%);
+            font-size: 9px; font-weight: 800; letter-spacing: 2.5px;
+            white-space: nowrap; padding: 0 6px;
+        }
+        .row.phase-start-collapsed::before {
+            content: '\26A0\FE0F  COLLAPSED  \26A0\FE0F';
+            color: #ef4444;
+        }
+        .row.phase-start-alternate::before {
+            content: '\1F300  ALTERNATE REALITY  \1F300';
+            color: var(--purple);
+        }
+
+        /* ======================================================
+           TILES
+           ====================================================== */
+        .tile {
+            width: var(--tile-size); height: var(--tile-size);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 28px; font-weight: 800; line-height: 1;
+            text-transform: uppercase;
+            border: 2px solid var(--border);
+            background: transparent; color: transparent;
+            transition: border-color 0.1s;
+            user-select: none;
+        }
+        .tile[data-state="tbd"] {
+            border-color: var(--border-active);
+            color: var(--text);
+        }
+        .tile[data-state="green"] {
+            background: var(--green); border-color: var(--green); color: var(--text);
+        }
+        .tile[data-state="yellow"] {
+            background: var(--yellow); border-color: var(--yellow); color: var(--text);
+        }
+        .tile[data-state="purple"] {
+            background: var(--purple); border-color: var(--purple); color: var(--text);
+        }
+        .tile[data-state="gray"] {
+            background: var(--gray); border-color: var(--gray); color: var(--text);
+        }
+
+        /* ======================================================
+           TILE ANIMATIONS
+           ====================================================== */
+        @keyframes pop {
+            0%   { transform: scale(1); }
+            50%  { transform: scale(1.12); }
+            100% { transform: scale(1); }
+        }
+        .tile.pop { animation: pop 100ms ease-in-out; }
+
+        @keyframes flipIn {
+            0%   { transform: rotateX(0deg); }
+            100% { transform: rotateX(-90deg); }
+        }
+        @keyframes flipOut {
+            0%   { transform: rotateX(90deg); }
+            100% { transform: rotateX(0deg); }
+        }
+        .tile.flip-in  { animation: flipIn  250ms ease-in  forwards; }
+        .tile.flip-out { animation: flipOut 250ms ease-out forwards; }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            12.5%    { transform: translateX(-6px); }
+            37.5%    { transform: translateX(6px); }
+            62.5%    { transform: translateX(-4px); }
+            87.5%    { transform: translateX(4px); }
+        }
+        .row.shake { animation: shake 400ms ease-in-out; }
+
+        @keyframes bounce {
+            0%, 20%  { transform: translateY(0); }
+            40%      { transform: translateY(-24px); }
+            50%      { transform: translateY(4px); }
+            60%      { transform: translateY(-12px); }
+            80%      { transform: translateY(2px); }
+            100%     { transform: translateY(0); }
+        }
+        .tile.bounce { animation: bounce 800ms ease; }
+
+        /* ======================================================
+           KEYBOARD
+           ====================================================== */
+        #keyboard {
+            flex-shrink: 0; padding: 8px 8px 12px;
+            display: flex; flex-direction: column;
+            align-items: center; gap: 6px;
+        }
+        .kb-row {
+            display: flex; gap: 5px; justify-content: center;
+        }
+        .key {
+            height: 52px; min-width: 32px; padding: 0 8px;
+            display: flex; align-items: center; justify-content: center;
+            background: var(--key-bg); color: var(--key-text);
+            border: none; border-radius: 4px;
+            font-family: var(--font); font-size: 13px; font-weight: 700;
+            cursor: pointer; text-transform: uppercase;
+            transition: background 0.3s, color 0.3s, transform 0.08s;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+        }
+        .key:active { transform: scale(0.92); }
+        .key.wide { min-width: 56px; font-size: 11px; letter-spacing: 0.5px; }
+        .key[data-state="green"]  { background: var(--green); }
+        .key[data-state="yellow"] { background: var(--yellow); }
+        .key[data-state="purple"] { background: var(--purple); }
+        .key[data-state="gray"]   { background: var(--gray); color: #565758; }
+
+        /* ======================================================
+           TOASTS
+           ====================================================== */
+        #toast-container {
+            position: fixed; top: 64px; left: 50%;
+            transform: translateX(-50%);
+            display: flex; flex-direction: column; align-items: center;
+            gap: 8px; z-index: 1000; pointer-events: none;
+        }
+        .toast {
+            padding: 12px 20px; border-radius: 6px;
+            background: var(--text); color: var(--bg);
+            font-size: 14px; font-weight: 700;
+            text-align: center; white-space: pre-line;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+            animation: toastIn 0.25s ease-out;
+            pointer-events: auto;
+        }
+        .toast.out { animation: toastOut 0.2s ease-in forwards; }
+        @keyframes toastIn {
+            from { opacity: 0; transform: translateY(-12px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes toastOut {
+            from { opacity: 1; }
+            to   { opacity: 0; }
+        }
+
+        /* ======================================================
+           MODAL OVERLAY
+           ====================================================== */
+        .modal-overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,0,0,0.65);
+            backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+            z-index: 2000;
+            align-items: center; justify-content: center;
+        }
+        .modal-overlay.visible { display: flex; }
+        .modal-card {
+            background: var(--bg-raised);
+            border: 1px solid var(--border);
+            border-radius: 12px; padding: 32px 28px;
+            max-width: 400px; width: 90%;
+            text-align: center;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+            animation: modalIn 0.35s ease-out;
+        }
+        @keyframes modalIn {
+            from { opacity: 0; transform: scale(0.92) translateY(20px); }
+            to   { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        .modal-card h2 {
+            font-size: 18px; font-weight: 800;
+            margin-bottom: 20px; letter-spacing: 0.5px;
+        }
+        .words-reveal {
+            display: flex; justify-content: center; gap: 28px;
+            margin-bottom: 18px;
+        }
+        .word-box { display: flex; flex-direction: column; gap: 4px; }
+        .word-box .label { font-size: 11px; color: var(--text-dim); letter-spacing: 1.5px; font-weight: 600; }
+        .word-box .value { font-size: 24px; font-weight: 900; letter-spacing: 3px; }
+        .word-box .value.a { color: var(--green); }
+        .word-box .value.b { color: var(--purple); }
+        .modal-stat {
+            font-size: 14px; color: var(--text-dim);
+            margin-bottom: 24px;
+        }
+        .modal-stat strong { color: var(--text); font-size: 20px; }
+        .modal-actions { display: flex; gap: 12px; justify-content: center; }
+        .modal-btn {
+            padding: 12px 24px; border: none; border-radius: 8px;
+            font-family: var(--font); font-size: 14px; font-weight: 700;
+            cursor: pointer; letter-spacing: 0.5px;
+            transition: transform 0.1s, filter 0.2s;
+        }
+        .modal-btn:hover { filter: brightness(1.15); }
+        .modal-btn:active { transform: scale(0.96); }
+        .modal-btn.primary {
+            background: var(--green); color: white;
+        }
+        .modal-btn.secondary {
+            background: var(--border); color: var(--text);
+        }
+
+        /* -- Help modal specifics -- */
+        #help-modal .modal-card { text-align: left; max-width: 440px; }
+        #help-modal h2 { text-align: center; }
+        #help-modal h3 {
+            font-size: 13px; color: var(--text-dim);
+            letter-spacing: 1.5px; margin: 18px 0 8px;
+        }
+        #help-modal p, #help-modal li {
+            font-size: 13px; line-height: 1.6; color: #ccc;
+        }
+        #help-modal ul { padding-left: 18px; }
+        .legend-row {
+            display: flex; align-items: center; gap: 10px;
+            margin: 6px 0;
+        }
+        .legend-swatch {
+            width: 28px; height: 28px; border-radius: 4px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 14px; font-weight: 800; color: white; flex-shrink: 0;
+        }
+        .legend-desc { font-size: 13px; color: #ccc; }
+        .close-modal-btn {
+            display: block; margin: 20px auto 0;
+            padding: 10px 28px; border: none; border-radius: 8px;
+            background: var(--border); color: var(--text);
+            font-family: var(--font); font-size: 13px; font-weight: 700;
+            cursor: pointer; transition: filter 0.2s;
+        }
+        .close-modal-btn:hover { filter: brightness(1.3); }
+
+        /* ======================================================
+           RESPONSIVE
+           ====================================================== */
+        @media (max-width: 400px) {
+            :root { --tile-size: calc((100vw - 64px) / 5); }
+            header h1 { font-size: 22px; letter-spacing: 3px; }
+            .key { height: 48px; min-width: 26px; font-size: 12px; padding: 0 5px; }
+            .key.wide { min-width: 44px; font-size: 10px; }
+            .tile { font-size: 22px; }
+        }
+    </style>
+</head>
+<body>
+<div id="game" class="phase-superposition">
+
+    <!-- ============ HEADER ============ -->
+    <header>
+        <button class="hdr-btn" id="help-btn" aria-label="Help">?</button>
+        <h1>QUANDLE</h1>
+        <button class="hdr-btn" id="dev-btn" aria-label="Dev Mode">&#9883;</button>
+    </header>
+
+    <!-- ============ DEV PANEL ============ -->
+    <div id="dev-panel">
+        <strong>DEV</strong> &nbsp;
+        A: <span class="dev-a" id="dev-word-a">???</span> &nbsp;|&nbsp;
+        B: <span class="dev-b" id="dev-word-b">???</span> &nbsp;|&nbsp;
+        Phase: <span id="dev-phase">superposition</span>
+    </div>
+
+    <!-- ============ PHASE BAR ============ -->
+    <div id="phase-bar">
+        <span id="phase-label">
+            <span id="phase-dot"></span>
+            <span id="phase-text">SUPERPOSITION</span>
+        </span>
+        <span id="guess-count">Guess 0</span>
+    </div>
+
+    <!-- ============ BOARD ============ -->
+    <main id="board-wrapper">
+        <div id="board"></div>
+    </main>
+
+    <!-- ============ KEYBOARD ============ -->
+    <div id="keyboard"></div>
+
+    <!-- ============ TOASTS ============ -->
+    <div id="toast-container"></div>
+
+    <!-- ============ HELP MODAL ============ -->
+    <div id="help-modal" class="modal-overlay">
+        <div class="modal-card">
+            <h2>⚛ How to Play</h2>
+            <p>The target word exists in <strong>quantum superposition</strong> of <strong>TWO</strong> 5-letter words. Deduce both to achieve decoherence!</p>
+
+            <h3>TILE COLOURS</h3>
+            <div class="legend-row"><span class="legend-swatch" style="background:var(--green)">A</span><span class="legend-desc"><strong>Green</strong> — Correct position. If unique to one word, triggers <em>collapse</em>.</span></div>
+            <div class="legend-row"><span class="legend-swatch" style="background:var(--yellow)">A</span><span class="legend-desc"><strong>Yellow</strong> — Letter in <em>both</em> words, wrong spot.</span></div>
+            <div class="legend-row"><span class="legend-swatch" style="background:var(--purple)">A</span><span class="legend-desc"><strong>Purple</strong> — Letter in <em>one</em> word only, wrong spot.</span></div>
+            <div class="legend-row"><span class="legend-swatch" style="background:var(--gray)">A</span><span class="legend-desc"><strong>Gray</strong> — Not in either word.</span></div>
+
+            <h3>PHASES</h3>
+            <ul>
+                <li><strong>Superposition:</strong> Guess against two hidden words.</li>
+                <li><strong>Collapsed:</strong> A unique green collapses reality — solve that word.</li>
+                <li><strong>Alternate Reality:</strong> First word solved — now find the other.</li>
+            </ul>
+
+            <h3>THE PARADOX RULE</h3>
+            <p>If a single guess has unique greens for <em>both</em> words, they cancel out! No collapse — those tiles turn <strong style="color:var(--purple)">Purple</strong> instead.</p>
+
+            <button class="close-modal-btn" id="close-help">GOT IT</button>
+        </div>
+    </div>
+
+    <!-- ============ VICTORY MODAL ============ -->
+    <div id="victory-modal" class="modal-overlay">
+        <div class="modal-card">
+            <h2>⚛ QUANTUM DECOHERENCE COMPLETE ⚛</h2>
+            <div class="words-reveal">
+                <div class="word-box"><span class="label">WORD A</span><span class="value a" id="reveal-a">—</span></div>
+                <div class="word-box"><span class="label">WORD B</span><span class="value b" id="reveal-b">—</span></div>
+            </div>
+            <div class="modal-stat">Solved in <strong id="reveal-count">0</strong> guesses</div>
+            <div class="modal-actions">
+                <button class="modal-btn primary" id="share-btn">Share 📋</button>
+                <button class="modal-btn secondary" id="new-game-btn">New Game</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+/* ==============================================================
+   QUANDLE — Quantum Word Deduction (Web Edition)
+   ==============================================================
+   A faithful web port of the Python terminal game, with full
+   animations, on-screen keyboard, and the Paradox Rule.
+   ============================================================== */
+
+// =============================================================
+//  DICTIONARY — curated 5-letter isograms
+// =============================================================
+const DICTIONARY = [
+    'about','adept','agile','anger','angle','ankle','arise','atone','audio',
+    'baker','basin','batch','beach','being','black','blade','blame','blank',
+    'blaze','blend','blind','block','blond','blunt','board','boned','borne',
+    'bound','brain','brand','brave','bread','brick','bride','bring','broad',
+    'broke','brown','brunt','brush','build','built','burnt','cable','camel',
+    'cargo','chain','chair','chalk','champ','charm','chase','cheap','chest',
+    'child','china','choir','choke','chord','cider','claim','clamp','clean',
+    'clear','climb','cling','cloak','clone','cloth','cloud','clown','coast',
+    'cobra','comet','coral','count','court','cover','craft','crane','crash',
+    'crest','crime','crisp','crowd','crown','crush','crypt','curve','dance',
+    'dealt','demon','depot','depth','diner','doing','doubt','dough','draft',
+    'drain','drank','drape','drawn','dream','drink','drive','drone','drunk',
+    'dwarf','dying','early','earth','eight','elbow','empty','enjoy','entry',
+    'equal','equip','ethic','exist','extra','fable','fairy','faith','fault',
+    'fibre','field','fiery','fight','filth','final','fixed','flame','flair',
+    'flesh','fling','float','flock','flora','fluid','focal','forge','forth',
+    'found','frame','frank','fraud','fresh','fried','frost','froze','fruit',
+    'fungi','ghost','glare','gleam','glide','globe','glove','glyph','goats',
+    'graft','grain','grand','grant','graph','grasp','grave','great','grind',
+    'gripe','groin','grope','grove','grown','guide','guild','guilt','guise',
+    'handy','harsh','hasty','haunt','haven','heard','heart','heavy','hinge',
+    'horse','hotel','hound','house','human','humid','hurts','hyper','ideal',
+    'image','ivory','jewel','joint','judge','juice','jumbo','kebab','knife',
+    'knelt','laced','laden','large','laser','latch','later','laugh','layer',
+    'leapt','leash','ledge','lemon','light','liken','liner','lofty','logic',
+    'lousy','lucid','lumps','lunch','lured','lying','lyric','magic','major',
+    'maple','march','mason','match','mayor','meals','meant','medal','mercy',
+    'merit','micro','might','miner','minus','model','money','month','moral',
+    'motel','mould','mount','mourn','mouse','mouth','moved','mover','music',
+    'naive','nerve','night','noble','noise','north','noted','novel','nurse',
+    'ocean','omega','onset','optic','orbit','other','ought','outer','owner',
+    'oxide','paint','panel','panic','parse','party','paste','patch','pause',
+    'peach','phase','piano','picky','pilot','pinch','pixel','place','plaid',
+    'plain','plane','plank','plant','plate','plaza','plead','plods','plumb',
+    'plume','poker','point','poise','polar','pound','power','prawn','pride',
+    'prime','print','prior','prize','probe','prong','prone','proud','prove',
+    'prude','psalm','pulse','punch','purge','quail','qualm','quart','query',
+    'quest','quick','quiet','quirk','quota','quote','quilt','radio','raise',
+    'range','rapid','ratio','reach','react','ready','realm','reign','relax',
+    'remit','renal','repay','reply','ridge','right','rigid','risky','rival',
+    'river','roast','robin','rocky','rogue','rough','round','route','royal',
+    'rugby','ruins','ruled','rumba','saint','satin','savor','scale','scamp',
+    'scare','scene','scent','scone','scope','score','scout','sedan','setup',
+    'shade','shake','shame','shape','share','shark','sharp','shave','shelf',
+    'shift','shine','shire','shirt','shock','shore','short','shout','shove',
+    'shown','shrub','shrug','sight','since','skate','skirt','slain','slate',
+    'slave','slice','slide','slime','slope','sloth','smart','smear','smile',
+    'smith','smoke','snack','snail','snake','snare','snipe','snore','solar',
+    'solid','solve','sonic','south','space','spare','spark','spawn','speak',
+    'spear','speck','spend','spent','spice','spike','spine','spite','split',
+    'spoke','spore','sport','spray','squad','stack','stage','staid','stain',
+    'stake','stale','stalk','stamp','stand','stank','stare','stark','steam',
+    'stern','sting','stock','stoke','stomp','stone','store','storm','story',
+    'stove','strap','straw','stray','strip','strum','strut','stuck','study',
+    'stump','stung','style','sugar','surge','swamp','swear','swept','swift',
+    'swing','swipe','swirl','swore','sworn','swung','synth','table','tango',
+    'teach','theft','thick','thing','think','third','thorn','threw','throw',
+    'thump','tiger','timed','tired','titan','token','total','touch','tough',
+    'towel','tower','toxic','trace','track','trade','trail','train','tramp',
+    'trash','trend','trial','trick','trims','trout','truck','truly','trump',
+    'trunk','trust','tuber','tumor','tuned','turbo','twice','twirl','typed',
+    'ultra','under','unify','union','unite','until','upset','urban','using',
+    'vague','valid','value','vault','video','vigor','vinyl','viola','viper',
+    'virus','vital','vocal','vodka','voice','voter','vouch','wager','waste',
+    'watch','water','waved','whack','whale','wheat','whelk','whine','whirl',
+    'white','widen','wider','witch','woman','world','worth','would','wound',
+    'wrath','write','wrong','wrote','yacht','yield','young','youth','zebra',
+    'zonal',
+];
+const DICT_SET = new Set(DICTIONARY);
+
+const WORD_LENGTH = 5;
+const INIT_ROWS  = 6;
+
+// Keyboard priority: green > purple > yellow > gray
+const KEY_PRIORITY = { green: 4, purple: 3, yellow: 2, gray: 1 };
+
+// =============================================================
+//  EXPANDED DICTIONARY — for validating player guesses
+//  Targets come from the curated DICTIONARY above (~500 words).
+//  Valid guesses are a much larger set (~12,000 5-letter isograms)
+//  fetched at runtime and cached in localStorage.
+// =============================================================
+const DICT_CACHE_KEY = 'quandle-expanded-dict-v2';
+const WORD_LIST_URL  = 'https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt';
+let validGuesses = new Set(DICTIONARY);   // start with targets; expands after load
+let dictReady = false;                    // true once expanded dict is available
+
+async function loadExpandedDictionary() {
+    // 1. Try localStorage cache first
+    try {
+        const cached = localStorage.getItem(DICT_CACHE_KEY);
+        if (cached) {
+            const words = cached.split('\n');
+            if (words.length > 500) {
+                words.forEach(w => validGuesses.add(w));
+                dictReady = true;
+                console.log(`[Quandle] Loaded ${validGuesses.size.toLocaleString()} valid words from cache`);
+                return;
+            }
+        }
+    } catch (_) { /* localStorage may be unavailable */ }
+
+    // 2. Fetch comprehensive word list (same source as Python version)
+    try {
+        const resp = await fetch(WORD_LIST_URL);
+        if (!resp.ok) throw new Error(resp.statusText);
+        const text = await resp.text();
+        const isograms = [];
+        for (const line of text.split(/\r?\n/)) {
+            const w = line.trim().toLowerCase();
+            if (w.length === WORD_LENGTH && /^[a-z]+$/.test(w) && new Set(w).size === WORD_LENGTH) {
+                isograms.push(w);
+                validGuesses.add(w);
+            }
+        }
+        // Cache for instant loads next time
+        try { localStorage.setItem(DICT_CACHE_KEY, isograms.join('\n')); } catch (_) {}
+        dictReady = true;
+        console.log(`[Quandle] Downloaded & cached ${isograms.length.toLocaleString()} valid isograms (${validGuesses.size.toLocaleString()} total)`);
+    } catch (e) {
+        console.log('[Quandle] Could not fetch expanded dictionary — using built-in list (' + validGuesses.size + ' words)');
+    }
+}
+
+// =============================================================
+//  GAME STATE
+// =============================================================
+let state = {
+    phase: 'superposition',   // 'superposition' | 'collapsed' | 'alternate'
+    wordA: null,
+    wordB: null,
+    activeTarget: null,
+    collapsedTo: null,         // 'A' | 'B' | null
+    guesses: [],               // [{word, tiles:[{letter,color}], phase, note}]
+    currentGuess: '',
+    keyboard: {},              // 'A'..'Z' -> color
+    gameOver: false,
+    firstGuess: true,
+    isRevealing: false,
+    devMode: false,
+};
+
+// =============================================================
+//  EVALUATION — Superposition (Phase 1)
+// =============================================================
+function evaluateSuperposition(guess, wordA, wordB) {
+    const tiles = [];
+    const collapseTargets = new Set();
+    const uniqueGreenIdx = [];
+
+    for (let i = 0; i < WORD_LENGTH; i++) {
+        const ch = guess[i];
+        const inPosA = ch === wordA[i];
+        const inPosB = ch === wordB[i];
+        const inWordA = wordA.includes(ch);
+        const inWordB = wordB.includes(ch);
+
+        if (inPosA && inPosB) {
+            tiles.push({ letter: ch, color: 'green' });          // Shared green
+        } else if (inPosA) {
+            tiles.push({ letter: ch, color: 'green' });          // Unique green A (tentative)
+            collapseTargets.add('A');
+            uniqueGreenIdx.push(i);
+        } else if (inPosB) {
+            tiles.push({ letter: ch, color: 'green' });          // Unique green B (tentative)
+            collapseTargets.add('B');
+            uniqueGreenIdx.push(i);
+        } else if (inWordA && inWordB) {
+            tiles.push({ letter: ch, color: 'yellow' });         // Both words, wrong spot
+        } else if (inWordA || inWordB) {
+            tiles.push({ letter: ch, color: 'purple' });         // One word, wrong spot
+        } else {
+            tiles.push({ letter: ch, color: 'gray' });           // Neither word
+        }
+    }
+
+    // === The Paradox Rule ===
+    // Double unique green (both A and B) → cancel, recolor to purple
+    if (collapseTargets.size === 2) {
+        for (const idx of uniqueGreenIdx) tiles[idx].color = 'purple';
+        return { tiles, collapseTarget: null, paradox: true };
+    }
+    if (collapseTargets.size === 1) {
+        return { tiles, collapseTarget: [...collapseTargets][0], paradox: false };
+    }
+    return { tiles, collapseTarget: null, paradox: false };
+}
+
+// =============================================================
+//  EVALUATION — Standard Wordle (Phase 2 & 3)
+// =============================================================
+function evaluateStandard(guess, target) {
+    return [...guess].map((ch, i) => ({
+        letter: ch,
+        color: ch === target[i] ? 'green' : target.includes(ch) ? 'yellow' : 'gray',
+    }));
+}
+
+// =============================================================
+//  KEYBOARD COLOR HELPERS
+// =============================================================
+
+/** Apply one guess's tiles to the keyboard using color priority. */
+function _applyTilesToKeyboard(tiles) {
+    for (const tile of tiles) {
+        const k = tile.letter.toUpperCase();
+        const cur = KEY_PRIORITY[state.keyboard[k]] || 0;
+        const nxt = KEY_PRIORITY[tile.color] || 0;
+        if (nxt > cur) state.keyboard[k] = tile.color;
+    }
+}
+
+/**
+ * Rebuild the keyboard from scratch using ONLY Phase 1 (superposition)
+ * and Phase 3 (alternate) guesses.  Phase 2 (collapsed) colors are
+ * intentionally discarded — a letter that was gray for Word A may be
+ * present in Word B, so carrying those grays forward is incorrect.
+ */
+function rebuildKeyboard() {
+    state.keyboard = {};
+    for (const record of state.guesses) {
+        if (record.phase === 'collapsed') continue;   // skip Phase 2
+        _applyTilesToKeyboard(record.tiles);
+    }
+}
+
+// =============================================================
+//  ENTANGLED PAIR SELECTION
+//  Requirements:
+//    1. No letter in the guess occupies the correct position in
+//       either word (no greens on Guess 1).
+//    2. At least one letter in the guess appears in exactly one
+//       of the two words (guarantees a purple tile on Guess 1).
+//  Fallback: if no pair meets both rules, relax to rule 1 only,
+//  then to any random pair.
+// =============================================================
+function findEntangledPair(guess) {
+    // Filter: no positional match with the first guess
+    const noGreen = DICTIONARY.filter(w =>
+        w !== guess && [...w].every((ch, i) => ch !== guess[i])
+    );
+
+    // Shuffle candidates once for randomness
+    const shuffled = [...noGreen];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+
+    // Try to find a pair that also guarantees at least one purple
+    // (a guess letter in exactly one of the two words, wrong position)
+    for (let a = 0; a < shuffled.length - 1; a++) {
+        for (let b = a + 1; b < Math.min(a + 40, shuffled.length); b++) {
+            const wA = shuffled[a], wB = shuffled[b];
+            const hasPurple = [...guess].some(ch => {
+                const inA = wA.includes(ch);
+                const inB = wB.includes(ch);
+                return (inA && !inB) || (!inA && inB);
+            });
+            if (hasPurple) return [wA, wB];
+        }
+    }
+
+    // Fallback 1: no-green pair without purple guarantee
+    if (shuffled.length >= 2) return [shuffled[0], shuffled[1]];
+
+    // Fallback 2: any two different words
+    const any = DICTIONARY.filter(w => w !== guess);
+    return [any[0], any[1]];
+}
+
+// =============================================================
+//  GAME LOGIC — Process a guess
+// =============================================================
+function processGuess(guess) {
+    const guessPhase = state.phase;   // capture BEFORE transition
+
+    // First guess: generate entangled pair
+    if (state.firstGuess) {
+        [state.wordA, state.wordB] = findEntangledPair(guess);
+        state.firstGuess = false;
+        updateDevPanel();
+    }
+
+    let tiles, note = '', paradox = false;
+
+    if (state.phase === 'superposition') {
+        const result = evaluateSuperposition(guess, state.wordA, state.wordB);
+        tiles = result.tiles;
+        paradox = result.paradox;
+
+        if (result.collapseTarget) {
+            state.collapsedTo = result.collapseTarget;
+            state.activeTarget = result.collapseTarget === 'A' ? state.wordA : state.wordB;
+            state.phase = 'collapsed';
+            note = 'COLLAPSE';
+
+            // Edge case: collapse + solve simultaneously
+            if (guess === state.activeTarget) {
+                const other = state.collapsedTo === 'A' ? state.wordB : state.wordA;
+                state.activeTarget = other;
+                state.phase = 'alternate';
+                note = 'COLLAPSE+SOLVE';
+            }
+        }
+    } else {
+        // Phase 2 (collapsed) or Phase 3 (alternate)
+        tiles = evaluateStandard(guess, state.activeTarget);
+
+        if (guess === state.activeTarget) {
+            if (state.phase === 'collapsed') {
+                const other = state.collapsedTo === 'A' ? state.wordB : state.wordA;
+                state.activeTarget = other;
+                state.phase = 'alternate';
+                note = 'SOLVED';
+            } else {
+                state.gameOver = true;
+                note = 'VICTORY';
+            }
+        }
+    }
+
+    const record = { word: guess, tiles, phase: guessPhase, note, paradox };
+    state.guesses.push(record);
+
+    // Update keyboard tracking
+    _applyTilesToKeyboard(tiles);
+
+    // === Keyboard Reset on Phase 3 Transition ===
+    // When entering Alternate Reality, the keyboard must forget all
+    // Phase 2 (Collapsed) colors — a letter marked gray for Word A
+    // may be present in Word B.  Rebuild from Phase 1 + Phase 3 only.
+    if (note === 'SOLVED' || note === 'COLLAPSE+SOLVE') {
+        rebuildKeyboard();
+    }
+
+    return record;
+}
+
+// =============================================================
+//  DOM REFERENCES
+// =============================================================
+const boardEl         = document.getElementById('board');
+const toastContainer  = document.getElementById('toast-container');
+const gameEl          = document.getElementById('game');
+const phaseTextEl     = document.getElementById('phase-text');
+const guessCountEl    = document.getElementById('guess-count');
+const devPanelEl      = document.getElementById('dev-panel');
+const devWordAEl      = document.getElementById('dev-word-a');
+const devWordBEl      = document.getElementById('dev-word-b');
+const devPhaseEl      = document.getElementById('dev-phase');
+const helpModal       = document.getElementById('help-modal');
+const victoryModal    = document.getElementById('victory-modal');
+const boardWrapper    = document.getElementById('board-wrapper');
+
+// =============================================================
+//  BOARD RENDERING
+// =============================================================
+function createRow() {
+    const row = document.createElement('div');
+    row.className = 'row';
+    for (let i = 0; i < WORD_LENGTH; i++) {
+        const tile = document.createElement('div');
+        tile.className = 'tile';
+        tile.dataset.state = 'empty';
+        row.appendChild(tile);
+    }
+    boardEl.appendChild(row);
+    return row;
+}
+
+function getRows() {
+    return boardEl.querySelectorAll('.row');
+}
+
+function ensureRows(count) {
+    while (getRows().length < count) createRow();
+}
+
+function getCurrentRowIndex() {
+    return state.guesses.length;
+}
+
+function updateCurrentRow() {
+    const rows = getRows();
+    const idx = getCurrentRowIndex();
+    if (idx >= rows.length) return;
+    const tiles = rows[idx].querySelectorAll('.tile');
+    for (let i = 0; i < WORD_LENGTH; i++) {
+        if (i < state.currentGuess.length) {
+            tiles[i].textContent = state.currentGuess[i].toUpperCase();
+            tiles[i].dataset.state = 'tbd';
+        } else {
+            tiles[i].textContent = '';
+            tiles[i].dataset.state = 'empty';
+        }
+    }
+}
+
+// =============================================================
+//  TILE FLIP ANIMATION
+// =============================================================
+function revealRow(rowIndex, tiles, callback) {
+    const row = getRows()[rowIndex];
+    const tileDivs = row.querySelectorAll('.tile');
+    const HALF = 250;
+    const STAGGER = 280;
+
+    tiles.forEach((t, i) => {
+        setTimeout(() => {
+            const el = tileDivs[i];
+            el.classList.add('flip-in');
+
+            setTimeout(() => {
+                el.classList.remove('flip-in');
+                el.dataset.state = t.color;
+                el.textContent = t.letter.toUpperCase();
+                el.classList.add('flip-out');
+
+                setTimeout(() => el.classList.remove('flip-out'), HALF);
+            }, HALF);
+        }, i * STAGGER);
+    });
+
+    // Callback after last tile finishes
+    const totalTime = (tiles.length - 1) * STAGGER + HALF * 2 + 50;
+    setTimeout(callback, totalTime);
+}
+
+function bounceRow(rowIndex) {
+    const row = getRows()[rowIndex];
+    const tileDivs = row.querySelectorAll('.tile');
+    tileDivs.forEach((el, i) => {
+        setTimeout(() => {
+            el.classList.add('bounce');
+            el.addEventListener('animationend', () => el.classList.remove('bounce'), { once: true });
+        }, i * 100);
+    });
+}
+
+function shakeRow(rowIndex) {
+    const row = getRows()[rowIndex];
+    row.classList.add('shake');
+    row.addEventListener('animationend', () => row.classList.remove('shake'), { once: true });
+}
+
+function popTile(rowIndex, tileIndex) {
+    const row = getRows()[rowIndex];
+    if (!row) return;
+    const tile = row.querySelectorAll('.tile')[tileIndex];
+    if (!tile) return;
+    tile.classList.remove('pop');
+    // Force reflow to re-trigger animation
+    void tile.offsetWidth;
+    tile.classList.add('pop');
+}
+
+// =============================================================
+//  KEYBOARD RENDERING
+// =============================================================
+const KB_ROWS = [
+    ['Q','W','E','R','T','Y','U','I','O','P'],
+    ['A','S','D','F','G','H','J','K','L'],
+    ['ENTER','Z','X','C','V','B','N','M','DEL'],
+];
+
+function buildKeyboard() {
+    const kbEl = document.getElementById('keyboard');
+    kbEl.innerHTML = '';
+    KB_ROWS.forEach(row => {
+        const rowDiv = document.createElement('div');
+        rowDiv.className = 'kb-row';
+        row.forEach(k => {
+            const btn = document.createElement('button');
+            btn.className = 'key' + (k === 'ENTER' || k === 'DEL' ? ' wide' : '');
+            btn.textContent = k === 'DEL' ? '⌫' : k;
+            btn.dataset.key = k;
+            btn.id = 'key-' + k;
+            btn.addEventListener('click', () => handleKey(k));
+            rowDiv.appendChild(btn);
+        });
+        kbEl.appendChild(rowDiv);
+    });
+}
+
+function renderKeyboard() {
+    document.querySelectorAll('.key').forEach(btn => {
+        const k = btn.dataset.key;
+        if (k && k.length === 1) {
+            const color = state.keyboard[k];
+            btn.dataset.state = color || '';
+        }
+    });
+}
+
+// =============================================================
+//  PHASE & DEV UI
+// =============================================================
+const PHASE_LABELS = {
+    superposition: 'SUPERPOSITION',
+    collapsed:     'COLLAPSED',
+    alternate:     'ALTERNATE REALITY',
+};
+
+function updatePhaseUI() {
+    // Phase text
+    phaseTextEl.textContent = PHASE_LABELS[state.phase];
+    guessCountEl.textContent = `Guess ${state.guesses.length}`;
+
+    // Phase class on game container (drives dot color)
+    gameEl.className = 'phase-' + state.phase;
+
+    // Dev panel phase
+    devPhaseEl.textContent = state.phase;
+}
+
+function updateDevPanel() {
+    devWordAEl.textContent = state.wordA ? state.wordA.toUpperCase() : '???';
+    devWordBEl.textContent = state.wordB ? state.wordB.toUpperCase() : '???';
+    devPhaseEl.textContent = state.phase;
+}
+
+// =============================================================
+//  TOAST SYSTEM
+// =============================================================
+function showToast(msg, duration = 2500) {
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = msg;
+    toastContainer.appendChild(el);
+    setTimeout(() => {
+        el.classList.add('out');
+        el.addEventListener('animationend', () => el.remove(), { once: true });
+    }, duration);
+}
+
+// =============================================================
+//  PHASE SEPARATOR (added to board rows)
+// =============================================================
+function maybeAddPhaseSeparator(rowIndex) {
+    if (rowIndex === 0) return;
+    const curPhase = state.guesses[rowIndex].phase;
+    const prevPhase = state.guesses[rowIndex - 1].phase;
+    if (curPhase !== prevPhase) {
+        const row = getRows()[rowIndex];
+        row.classList.add('phase-start-' + curPhase);
+    }
+}
+
+// =============================================================
+//  VICTORY & SHARE
+// =============================================================
+function showVictory() {
+    document.getElementById('reveal-a').textContent = state.wordA.toUpperCase();
+    document.getElementById('reveal-b').textContent = state.wordB.toUpperCase();
+    document.getElementById('reveal-count').textContent = state.guesses.length;
+    victoryModal.classList.add('visible');
+}
+
+function generateShareText() {
+    const emojiMap = { green: '🟩', yellow: '🟨', purple: '🟪', gray: '⬛' };
+    let text = `QUANDLE ⚛️ · ${state.guesses.length} guesses\n\n`;
+    let prevPhase = null;
+    for (const g of state.guesses) {
+        if (prevPhase && g.phase !== prevPhase) {
+            if (g.phase === 'collapsed')  text += '—— 💥 ——\n';
+            if (g.phase === 'alternate')  text += '—— 🌀 ——\n';
+        }
+        text += g.tiles.map(t => emojiMap[t.color]).join('');
+        if (g.note === 'COLLAPSE' || g.note === 'COLLAPSE+SOLVE') text += ' 💥';
+        if (g.note === 'SOLVED' || g.note === 'COLLAPSE+SOLVE')   text += ' ✅';
+        if (g.note === 'VICTORY') text += ' ⭐';
+        text += '\n';
+        prevPhase = g.phase;
+    }
+    return text.trim();
+}
+
+// =============================================================
+//  INPUT HANDLING
+// =============================================================
+function handleKey(key) {
+    if (state.isRevealing || state.gameOver) return;
+
+    if (key === 'ENTER') {
+        handleSubmit();
+    } else if (key === 'DEL' || key === 'BACKSPACE') {
+        if (state.currentGuess.length > 0) {
+            state.currentGuess = state.currentGuess.slice(0, -1);
+            updateCurrentRow();
+        }
+    } else if (key.length === 1 && /^[A-Z]$/i.test(key)) {
+        if (state.currentGuess.length < WORD_LENGTH) {
+            state.currentGuess += key.toUpperCase();
+            updateCurrentRow();
+            popTile(getCurrentRowIndex(), state.currentGuess.length - 1);
+        }
+    }
+}
+
+function handleSubmit() {
+    const guess = state.currentGuess.toLowerCase();
+
+    if (guess.length < WORD_LENGTH) {
+        showToast('Not enough letters');
+        shakeRow(getCurrentRowIndex());
+        return;
+    }
+
+    if (!validGuesses.has(guess)) {
+        showToast('Not in word list');
+        shakeRow(getCurrentRowIndex());
+        return;
+    }
+
+    const rowIndex = getCurrentRowIndex();
+    state.isRevealing = true;
+
+    // Process the guess (updates game state)
+    const record = processGuess(guess);
+    state.currentGuess = '';
+
+    // Reveal tiles with flip animation
+    revealRow(rowIndex, record.tiles, () => {
+        state.isRevealing = false;
+
+        // Phase separator on board
+        maybeAddPhaseSeparator(rowIndex);
+
+        // Update keyboard & phase UI
+        renderKeyboard();
+        updatePhaseUI();
+        updateDevPanel();
+
+        // Event toasts
+        if (record.paradox) {
+            showToast('⚛ QUANTUM PARADOX ⚛\nConflicting observations cancel out!', 3000);
+        }
+        if (record.note === 'COLLAPSE') {
+            showToast('⚠️ WAVE FUNCTION COLLAPSED ⚠️\nReality narrowed to one word.', 3500);
+        }
+        if (record.note === 'COLLAPSE+SOLVE') {
+            showToast('💥 INSTANT COLLAPSE + SOLVE!\nEntering alternate reality...', 3500);
+        }
+        if (record.note === 'SOLVED') {
+            showToast('✓ Word found!\nNow entering alternate reality...', 3500);
+        }
+
+        // Victory
+        if (record.note === 'VICTORY') {
+            bounceRow(rowIndex);
+            setTimeout(() => showVictory(), 1600);
+        }
+
+        // Ensure next row exists
+        ensureRows(state.guesses.length + 1);
+
+        // Scroll to current row
+        setTimeout(() => {
+            const nextRow = getRows()[state.guesses.length];
+            if (nextRow) nextRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 100);
+    });
+}
+
+// =============================================================
+//  EVENT LISTENERS
+// =============================================================
+
+// Physical keyboard
+document.addEventListener('keydown', (e) => {
+    if (helpModal.classList.contains('visible') || victoryModal.classList.contains('visible')) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    if (e.key === 'Enter') {
+        handleKey('ENTER');
+    } else if (e.key === 'Backspace') {
+        handleKey('DEL');
+    } else if (/^[a-zA-Z]$/.test(e.key)) {
+        handleKey(e.key.toUpperCase());
+    }
+});
+
+// Help modal
+document.getElementById('help-btn').addEventListener('click', () => helpModal.classList.add('visible'));
+document.getElementById('close-help').addEventListener('click', () => helpModal.classList.remove('visible'));
+helpModal.addEventListener('click', (e) => { if (e.target === helpModal) helpModal.classList.remove('visible'); });
+
+// Dev mode
+document.getElementById('dev-btn').addEventListener('click', () => {
+    state.devMode = !state.devMode;
+    devPanelEl.classList.toggle('visible', state.devMode);
+    if (state.devMode) {
+        updateDevPanel();
+        console.log('DEV MODE ON — Word A:', state.wordA, '| Word B:', state.wordB);
+    }
+});
+
+// Victory modal buttons
+document.getElementById('share-btn').addEventListener('click', () => {
+    const text = generateShareText();
+    navigator.clipboard.writeText(text).then(() => {
+        showToast('Copied to clipboard!');
+    }).catch(() => {
+        // Fallback: select text
+        showToast('Could not copy — check console');
+        console.log(text);
+    });
+});
+document.getElementById('new-game-btn').addEventListener('click', () => location.reload());
+
+// =============================================================
+//  INITIALIZATION
+// =============================================================
+function init() {
+    buildKeyboard();
+    ensureRows(INIT_ROWS);
+    updatePhaseUI();
+    loadExpandedDictionary(); // fire-and-forget; game is playable immediately with built-in list
+}
+
+init();
+</script>
+</body>
+</html>
