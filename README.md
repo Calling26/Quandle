@@ -1,12 +1,15 @@
 # ⚛️ QUANDLE — A Quantum Wordle Variant
 
+🚀 **[PLAY LIVE IN YOUR BROWSER HERE!](https://calling26.github.io/Quandle/)**
+
 **Quandle** is a quantum-inspired word deduction game where the target word exists in a superposition of **two different words**. Every guess you make acts as an observation that collapses the wave function based on quantum tile rules!
 
 Available in two formats:
-1. **Interactive Web App** (`index.html`)
+1. **Interactive Web App** ([Play Online](https://calling26.github.io/Quandle/))
 2. **Terminal CLI Application** (`quandle.py`)
 
 ---
+
 
 ## 🎮 How to Play
 
