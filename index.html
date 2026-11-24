@@ -89,6 +89,17 @@
         #help-btn { left: 16px; font-weight: 700; }
         #dev-btn  { right: 16px; font-size: 14px; opacity: 0.35; }
         #dev-btn:hover { opacity: 1; }
+        #dev-btn.active {
+            opacity: 1;
+            border-color: #facc15;
+            color: #facc15;
+        }
+        #dev-btn.error {
+            opacity: 1;
+            border-color: #ef4444 !important;
+            color: #ef4444 !important;
+            animation: shake 400ms ease-in-out;
+        }
 
         /* ======================================================
            PHASE INDICATOR
@@ -144,6 +155,7 @@
         .row {
             display: grid; grid-template-columns: repeat(5, 1fr);
             gap: var(--tile-gap); width: 100%;
+            transition: margin-top 0.25s ease;
         }
 
         /* --- Phase separators (via CSS classes set by JS) --- */
@@ -336,6 +348,20 @@
             margin-bottom: 24px;
         }
         .modal-stat strong { color: var(--text); font-size: 20px; }
+        .modal-dev-status {
+            font-size: 13px; color: var(--text-dim);
+            margin-top: -14px; margin-bottom: 22px;
+            letter-spacing: 0.5px;
+        }
+        .modal-dev-status strong {
+            font-weight: 700;
+        }
+        .modal-dev-status strong.used {
+            color: #facc15;
+        }
+        .modal-dev-status strong.not-used {
+            color: var(--green);
+        }
         .modal-actions { display: flex; gap: 12px; justify-content: center; }
         .modal-btn {
             padding: 12px 24px; border: none; border-radius: 8px;
@@ -467,6 +493,7 @@
                 <div class="word-box"><span class="label">WORD B</span><span class="value b" id="reveal-b">—</span></div>
             </div>
             <div class="modal-stat">Solved in <strong id="reveal-count">0</strong> guesses</div>
+            <div class="modal-dev-status" id="reveal-dev-status">Dev Mode: <strong id="reveal-dev-mode">Not Used</strong></div>
             <div class="modal-actions">
                 <button class="modal-btn primary" id="share-btn">Share 📋</button>
                 <button class="modal-btn secondary" id="new-game-btn">New Game</button>
@@ -622,14 +649,45 @@ let state = {
     wordB: null,
     activeTarget: null,
     collapsedTo: null,         // 'A' | 'B' | null
-    guesses: [],               // [{word, tiles:[{letter,color}], phase, note}]
+    guesses: [],               // [{word, tiles:[{letter,color}], phase, note, paradox}]
     currentGuess: '',
     keyboard: {},              // 'A'..'Z' -> color
     gameOver: false,
     firstGuess: true,
     isRevealing: false,
     devMode: false,
+    devModeUsed: false,
 };
+
+// =============================================================
+//  GAME STATE STORAGE
+// =============================================================
+const STATE_STORAGE_KEY = 'quandle_game_state_v1';
+
+function saveGameState() {
+    try {
+        const data = {
+            phase: state.phase,
+            wordA: state.wordA,
+            wordB: state.wordB,
+            activeTarget: state.activeTarget,
+            collapsedTo: state.collapsedTo,
+            guesses: state.guesses,
+            keyboard: state.keyboard,
+            gameOver: state.gameOver,
+            firstGuess: state.firstGuess,
+            devMode: state.devMode,
+            devModeUsed: state.devModeUsed,
+        };
+        localStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(data));
+    } catch (_) {}
+}
+
+function clearGameState() {
+    try {
+        localStorage.removeItem(STATE_STORAGE_KEY);
+    } catch (_) {}
+}
 
 // =============================================================
 //  EVALUATION — Superposition (Phase 1)
@@ -1028,13 +1086,18 @@ function showToast(msg, duration = 2500) {
 // =============================================================
 //  PHASE SEPARATOR (added to board rows)
 // =============================================================
-function maybeAddPhaseSeparator(rowIndex) {
-    if (rowIndex === 0) return;
-    const curPhase = state.guesses[rowIndex].phase;
-    const prevPhase = state.guesses[rowIndex - 1].phase;
-    if (curPhase !== prevPhase) {
-        const row = getRows()[rowIndex];
-        row.classList.add('phase-start-' + curPhase);
+function maybeAddPhaseSeparator(rowIndex, record) {
+    const row = getRows()[rowIndex];
+    if (!row || !record) return;
+    if (record.note === 'COLLAPSE' || record.note === 'COLLAPSE+SOLVE') {
+        row.classList.add('phase-start-collapsed');
+    } else if (record.note === 'SOLVED') {
+        row.classList.add('phase-start-alternate');
+    }
+    if (record.note === 'COLLAPSE+SOLVE') {
+        ensureRows(state.guesses.length + 1);
+        const nextRow = getRows()[rowIndex + 1];
+        if (nextRow) nextRow.classList.add('phase-start-alternate');
     }
 }
 
@@ -1045,25 +1108,33 @@ function showVictory() {
     document.getElementById('reveal-a').textContent = state.wordA.toUpperCase();
     document.getElementById('reveal-b').textContent = state.wordB.toUpperCase();
     document.getElementById('reveal-count').textContent = state.guesses.length;
+    const devModeEl = document.getElementById('reveal-dev-mode');
+    if (devModeEl) {
+        devModeEl.textContent = state.devModeUsed ? 'Used' : 'Not Used';
+        devModeEl.className = state.devModeUsed ? 'used' : 'not-used';
+    }
     victoryModal.classList.add('visible');
 }
 
 function generateShareText() {
     const emojiMap = { green: '🟩', yellow: '🟨', purple: '🟪', gray: '⬛' };
     let text = `QUANDLE ⚛️ · ${state.guesses.length} guesses\n\n`;
-    let prevPhase = null;
-    for (const g of state.guesses) {
-        if (prevPhase && g.phase !== prevPhase) {
-            if (g.phase === 'collapsed')  text += '—— 💥 ——\n';
-            if (g.phase === 'alternate')  text += '—— 🌀 ——\n';
+    for (let i = 0; i < state.guesses.length; i++) {
+        const g = state.guesses[i];
+        if (g.note === 'COLLAPSE' || g.note === 'COLLAPSE+SOLVE') {
+            text += '—— 💥 ——\n';
+        } else if (g.note === 'SOLVED') {
+            text += '—— 🌀 ——\n';
+        } else if (i > 0 && state.guesses[i - 1].note === 'COLLAPSE+SOLVE') {
+            text += '—— 🌀 ——\n';
         }
         text += g.tiles.map(t => emojiMap[t.color]).join('');
         if (g.note === 'COLLAPSE' || g.note === 'COLLAPSE+SOLVE') text += ' 💥';
         if (g.note === 'SOLVED' || g.note === 'COLLAPSE+SOLVE')   text += ' ✅';
         if (g.note === 'VICTORY') text += ' ⭐';
         text += '\n';
-        prevPhase = g.phase;
     }
+    text += `\nDev Mode: ${state.devModeUsed ? 'Used' : 'Not Used'}`;
     return text.trim();
 }
 
@@ -1115,13 +1186,16 @@ function handleSubmit() {
     revealRow(rowIndex, record.tiles, () => {
         state.isRevealing = false;
 
-        // Phase separator on board
-        maybeAddPhaseSeparator(rowIndex);
+        // Phase separator on board: immediately above the guess row that triggered transition
+        maybeAddPhaseSeparator(rowIndex, record);
 
         // Update keyboard & phase UI
         renderKeyboard();
         updatePhaseUI();
         updateDevPanel();
+
+        // Save game state
+        saveGameState();
 
         // Event toasts
         if (record.paradox) {
@@ -1178,14 +1252,59 @@ document.getElementById('close-help').addEventListener('click', () => helpModal.
 helpModal.addEventListener('click', (e) => { if (e.target === helpModal) helpModal.classList.remove('visible'); });
 
 // Dev mode
-document.getElementById('dev-btn').addEventListener('click', () => {
-    state.devMode = !state.devMode;
-    devPanelEl.classList.toggle('visible', state.devMode);
+function toggleDevMode() {
+    const devBtn = document.getElementById('dev-btn');
     if (state.devMode) {
-        updateDevPanel();
-        console.log('DEV MODE ON — Word A:', state.wordA, '| Word B:', state.wordB);
+        // Turning Developer Mode off should not require a password.
+        state.devMode = false;
+        devPanelEl.classList.remove('visible');
+        if (devBtn) devBtn.classList.remove('active');
+        saveGameState();
+        return;
     }
-});
+
+    // Require the password 1234 whenever a user tries to turn Developer Mode on.
+    const entered = window.prompt('Enter Developer Mode password:');
+    if (entered === null) {
+        // Cancelled
+        triggerDevModeError('Developer Mode cancelled');
+        return;
+    }
+
+    if (entered.trim() !== '1234') {
+        // Incorrect
+        triggerDevModeError('Incorrect password');
+        return;
+    }
+
+    // Correct password
+    state.devMode = true;
+    state.devModeUsed = true;
+    devPanelEl.classList.add('visible');
+    if (devBtn) devBtn.classList.add('active');
+    updateDevPanel();
+    saveGameState();
+    console.log('DEV MODE ON — Word A:', state.wordA, '| Word B:', state.wordB);
+}
+
+function triggerDevModeError(msg) {
+    state.devMode = false;
+    devPanelEl.classList.remove('visible');
+    const devBtn = document.getElementById('dev-btn');
+    if (devBtn) {
+        devBtn.classList.remove('active');
+        devBtn.classList.remove('error');
+        void devBtn.offsetWidth; // re-trigger animation
+        devBtn.classList.add('error');
+        setTimeout(() => {
+            devBtn.classList.remove('error');
+        }, 1500);
+    }
+    showToast(msg || 'Incorrect password');
+    saveGameState();
+}
+
+document.getElementById('dev-btn').addEventListener('click', toggleDevMode);
 
 // Victory modal buttons
 document.getElementById('share-btn').addEventListener('click', () => {
@@ -1198,15 +1317,90 @@ document.getElementById('share-btn').addEventListener('click', () => {
         console.log(text);
     });
 });
-document.getElementById('new-game-btn').addEventListener('click', () => location.reload());
+document.getElementById('new-game-btn').addEventListener('click', () => {
+    clearGameState();
+    location.reload();
+});
+
+// =============================================================
+//  GAME STATE STORAGE RESTORATION
+// =============================================================
+function loadGameState() {
+    try {
+        const raw = localStorage.getItem(STATE_STORAGE_KEY);
+        if (!raw) return false;
+        const data = JSON.parse(raw);
+        if (!data || !Array.isArray(data.guesses)) return false;
+
+        state.phase = data.phase || 'superposition';
+        state.wordA = data.wordA || null;
+        state.wordB = data.wordB || null;
+        state.activeTarget = data.activeTarget || null;
+        state.collapsedTo = data.collapsedTo || null;
+        state.guesses = data.guesses || [];
+        state.keyboard = data.keyboard || {};
+        state.gameOver = !!data.gameOver;
+        state.firstGuess = data.firstGuess !== undefined ? data.firstGuess : (state.guesses.length === 0);
+        state.devMode = !!data.devMode;
+        state.devModeUsed = !!data.devModeUsed;
+        state.currentGuess = '';
+        state.isRevealing = false;
+
+        const targetRowCount = Math.max(INIT_ROWS, state.guesses.length + (state.gameOver ? 0 : 1));
+        ensureRows(targetRowCount);
+        const rows = getRows();
+
+        state.guesses.forEach((g, i) => {
+            const row = rows[i];
+            if (!row) return;
+
+            const tiles = row.querySelectorAll('.tile');
+            g.tiles.forEach((t, col) => {
+                if (tiles[col]) {
+                    tiles[col].textContent = t.letter.toUpperCase();
+                    tiles[col].dataset.state = t.color;
+                }
+            });
+
+            maybeAddPhaseSeparator(i, g);
+        });
+
+        renderKeyboard();
+        updatePhaseUI();
+        updateDevPanel();
+
+        const devBtn = document.getElementById('dev-btn');
+        if (state.devMode) {
+            devPanelEl.classList.add('visible');
+            if (devBtn) devBtn.classList.add('active');
+        }
+
+        if (state.gameOver) {
+            showVictory();
+        } else if (state.guesses.length > 0) {
+            setTimeout(() => {
+                const curRow = rows[state.guesses.length];
+                if (curRow) curRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 100);
+        }
+
+        return true;
+    } catch (e) {
+        console.error('[Quandle] Failed to load saved game state:', e);
+        return false;
+    }
+}
 
 // =============================================================
 //  INITIALIZATION
 // =============================================================
 function init() {
     buildKeyboard();
-    ensureRows(INIT_ROWS);
-    updatePhaseUI();
+    const loaded = loadGameState();
+    if (!loaded) {
+        ensureRows(INIT_ROWS);
+        updatePhaseUI();
+    }
     loadExpandedDictionary(); // fire-and-forget; game is playable immediately with built-in list
 }
 
